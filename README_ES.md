@@ -1,10 +1,10 @@
-# Amazon Reviews Spanish — Clasificación de Sentimiento y Recuperación
+# Amazon Reviews Spanish — Clasificación de Sentimiento y Respuesta a Preguntas con Recuperación
 
-Proyecto de NLP que clasifica el sentimiento de 208.899 reseñas de Amazon en español en negativo, neutro y positivo, comparando un baseline de bolsa de palabras contra un transformer español ajustado, y construyendo un sistema de recuperación sobre el mismo corpus.
+Dos sistemas construidos sobre 208.899 reseñas de Amazon en español. Un **clasificador** que etiqueta el sentimiento como negativo, neutro o positivo, comparando un baseline de bolsa de palabras contra un transformer español ajustado. Y un **sistema de recuperación** que responde preguntas sobre el corpus en lenguaje natural, fundamentadas en reseñas reales y filtradas por las etiquetas del propio clasificador.
 
-- **Problema:** Recuperar el sentimiento del cliente únicamente a partir del texto de la reseña, y hacer consultables en lenguaje natural los motivos que hay detrás
-- **Resultado:** F1 macro de 0,765 con BETO frente a 0,725 del baseline TF-IDF — y F1 de 0,85 a 0,88 en los dos polos, invirtiendo el signo en solo el 1 % de los casos
-- **Valor:** El transformer gana por cuatro puntos y cuesta **1.009 veces más por predicción**, lo que convierte la comparación en una decisión de despliegue en lugar de un ranking
+- **Problema:** Las métricas dicen *cuántos* clientes están descontentos. Nunca dicen *por qué*. El primer sistema recupera el sentimiento solo a partir del texto; el segundo recupera los motivos que hay detrás y los cita.
+- **Resultado:** F1 macro de 0,765 con BETO frente a 0,725 del baseline, y de 0,85 a 0,88 en los dos polos invirtiendo el signo en solo el 1 % de los casos. El sistema de recuperación destapó que **la insatisfacción en la categoría `wireless` es mayoritariamente logística y no de producto** — un hallazgo que ninguna métrica agregada habría producido.
+- **Valor:** El transformer gana por cuatro puntos y cuesta **1.009 veces más por predicción**, lo que convierte la comparación en una decisión de despliegue en lugar de un ranking. Y ese mismo análisis de coste decide qué modelo etiqueta el corpus que alimenta la recuperación.
 
 > [View this project in English](README.md)
 
@@ -46,15 +46,24 @@ La primera es un problema de **clasificación supervisada de tres clases**. La p
 
 ## Valor de negocio
 
-**El modelo hace una cosa: distinguir satisfacción de insatisfacción, y lo hace bien.** De las reseñas realmente negativas, el 83 % se clasifican correctamente y el 1 % se etiquetan como positivas. En las positivas, 85 % y 1 %.
+### El clasificador: cuántos y dónde
+
+**Distingue satisfacción de insatisfacción, y lo hace bien.** De las reseñas realmente negativas, el 83 % se clasifican correctamente y el 1 % se etiquetan como positivas. En las positivas, 85 % y 1 %.
 
 La forma de ese perfil de error es lo que lo hace utilizable. **El modelo prácticamente nunca invierte el signo.** Cuando falla en una reseña polar no afirma lo contrario, se repliega al centro. Para cualquier proceso que enrute reseñas por sentimiento, un cliente descontento como mucho se queda sin enrutar, nunca se archiva como satisfecho.
 
-Tres aplicaciones se derivan directamente:
-
 - **Puntuar texto que no lleva valoración asociada.** Tickets de soporte, respuestas de encuesta y menciones en redes contienen opinión de clientes sin ninguna estrella. El mismo modelo se aplica sin reentrenar.
 - **Detectar deterioro antes de que se mueva la media.** La media de estrellas de un producto se calcula sobre todo su histórico y reacciona despacio. Clasificar las reseñas según entran hace visible el cambio de inmediato.
-- **Hacer consultables los motivos.** El sistema de recuperación convierte *¿de qué se quejan los clientes en esta categoría?* en una consulta en lugar de una semana de lectura manual.
+
+### El sistema de recuperación: por qué
+
+Una puntuación de sentimiento es un número. No puede decir qué hay detrás, y esa suele ser la parte sobre la que alguien tiene que actuar.
+
+Filtrar la recuperación por las etiquetas del propio clasificador y fundamentar la respuesta en las reseñas recuperadas convierte *¿de qué se quejan los clientes en esta categoría?* en una consulta en lugar de una semana de lectura manual. Preguntado exactamente eso sobre la categoría `wireless`, el sistema devolvió quejas sobre **vendedores que no contestan, pedidos que nunca llegaron y devoluciones que costaron semanas** — casi nada sobre el producto en sí.
+
+Esa es una conclusión accionable y con un responsable claro: la palanca está en la gestión del vendedor y la entrega, no en la fabricación. Y es una conclusión que ninguna métrica agregada puede producir. El clasificador puede decir que el 46 % de las reseñas de `wireless` son negativas; solo la recuperación puede decir que las quejas van del envío.
+
+**Los dos sistemas son complementarios y no secuenciales.** El clasificador dice cuántos y dónde; la recuperación dice por qué, y cita a los clientes que lo dijeron.
 
 ---
 
@@ -270,22 +279,55 @@ El kappa de Cohen entre los dos conjuntos de predicciones es 0,782 — alto, per
 
 ## Sistema de recuperación (RAG)
 
-Reseñas indexadas en ChromaDB con embeddings de frase, recuperadas por similitud semántica con filtrado por metadatos, y resumidas por un modelo de lenguaje restringido al texto recuperado.
+El clasificador responde *cuántos* clientes están descontentos y *dónde*. Esto responde **por qué**, con sus propias palabras, y los cita.
 
-**Decisiones de diseño:**
+### Arquitectura
 
-- **Una reseña es un fragmento.** Con una mediana de 22 palabras, la reseña ya es la unidad correcta. El corpus elimina un problema de ajuste entero.
-- **La recuperación funciona sobre texto limpio; lo que se devuelve es el original.** Solo posible porque las columnas originales se conservaron durante la limpieza.
-- **El sentimiento es un campo indexado y filtrable**, que es lo que conecta las dos mitades del proyecto. Sobre texto sin etiquetar la etiqueta vendría del clasificador — y el análisis de coste dice cuál: 10 segundos con el baseline frente a 2,8 horas con BETO.
-- **Distancia coseno, no la de Chroma por defecto**, para que la magnitud del vector no deje que la longitud de la reseña interfiera en el orden.
-- **La deduplicación no es opcional.** *Buena relación calidad precio* aparece 112 veces de forma literal; sin un filtro de diversidad, una consulta devuelve quince fragmentos que dicen todos lo mismo.
-- **Tres reglas en el prompt:** responder solo con las reseñas proporcionadas, citar el número de cada reseña que respalda una afirmación, y decir explícitamente cuándo la respuesta no está.
+```
+pregunta
+   ↓
+filtro por metadatos     categoría + sentimiento, aplicado antes de calcular ninguna similitud
+   ↓
+búsqueda vectorial       ChromaDB, distancia coseno sobre embeddings de frase, k = 30
+   ↓
+deduplicación            umbral coseno 0,9, reduce a 15 fragmentos diversos
+   ↓
+generación fundamentada  LLM restringido al texto recuperado, con citas
+```
 
-**Lo que reveló la recuperación.** Preguntar *¿de qué se quejan los clientes?* en la categoría `wireless` devolvió quince reseñas de las que casi ninguna hablaba del producto: vendedores que no contestan, pedidos que nunca llegaron, devoluciones que tardaron semanas, garantías que nadie atendió. **En las reseñas negativas de esa categoría, la insatisfacción es mayoritariamente logística y no de producto** — lo que sitúa la palanca en la gestión del vendedor y la entrega, no en la fabricación.
+### Decisiones de diseño
 
-Preguntar específicamente por la batería devolvió quince reseñas todas sobre el tema, agrupadas en autonomía insuficiente, fallos de carga y discrepancia con la especificación anunciada. **El índice funcionaba en ambos casos; la primera pregunta era simplemente demasiado genérica.**
+**Una reseña es un fragmento.** Los sistemas de recuperación normalmente tienen que trocear documentos en pasajes, y ese troceado es un problema de ajuste en sí mismo. Con una mediana de 22 palabras, la reseña ya es la unidad correcta. El corpus elimina una decisión de diseño entera.
 
----
+**La recuperación funciona sobre texto limpio; lo que se devuelve es el original.** Ambos se almacenan por separado en Chroma, que no exige que coincidan. Buscar sobre texto normalizado mientras se muestra lo que el cliente escribió realmente solo es posible porque las columnas originales se conservaron durante la limpieza — una decisión tomada cinco etapas antes que se rentabiliza aquí.
+
+**El sentimiento es un campo indexado y filtrable, y esto es lo que conecta las dos mitades del proyecto.** Sin él, el sistema solo podría emparejar por similitud textual. Con él, una pregunta puede restringirse a las reseñas negativas de una categoría concreta antes de calcular ninguna similitud. Aquí la etiqueta viene de `stars`; sobre texto sin etiquetar vendría del clasificador — y el análisis de coste dice cuál: etiquetar 208.899 reseñas cuesta **10 segundos con el baseline frente a 2,8 horas con BETO** en CPU. La comparación A/B no es un ejercicio académico, decide una elección de arquitectura.
+
+**Distancia coseno, no la de Chroma por defecto.** Chroma indexa con distancia euclídea al cuadrado salvo que se le indique otra cosa, lo que deja que la magnitud del vector interfiera en el orden. Las reseñas tienen longitudes distintas, así que la magnitud es justo lo que hay que ignorar.
+
+**La deduplicación no es opcional aquí.** *Buena relación calidad precio* aparece 112 veces de forma literal. Textos casi idénticos producen vectores casi idénticos, así que sin un filtro de diversidad una consulta devuelve quince fragmentos que dicen todos lo mismo. Se recuperan 30 candidatos y se reducen a 15, porque la deduplicación descarta un número variable.
+
+**La generación está restringida por tres reglas:** responder solo con las reseñas proporcionadas, citar el número de cada reseña que respalda una afirmación, y decir explícitamente cuándo la respuesta no está. La tercera es la más importante. Sin permiso explícito para abstenerse, un modelo de lenguaje produce una respuesta plausible antes que admitir que el contexto no la contiene — y un sistema que se inventa quejas de clientes es peor que no tener sistema.
+
+### Lo que encontró
+
+Preguntar *¿de qué se quejan los clientes?* en la categoría `wireless` devolvió quince reseñas de las que **casi ninguna hablaba del producto**. Hablaban de vendedores que no contestan, pedidos que nunca llegaron, devoluciones que costaron semanas de mensajes, garantías que nadie atendió y artículos que no coincidían con su descripción.
+
+**En las reseñas negativas de esa categoría, la insatisfacción es mayoritariamente logística y no de producto.** Para un minorista eso es una conclusión accionable y con un responsable claro: la palanca está en la gestión del vendedor y la entrega, no en la fabricación ni en el diseño. Ninguna métrica agregada de sentimiento lo habría producido — el clasificador puede decir que el 46 % de las reseñas de `wireless` son negativas, pero no que las quejas van del envío.
+
+Preguntar específicamente por la batería devolvió quince reseñas todas sobre el tema, agrupadas en autonomía insuficiente, fallos de carga y discrepancia con la especificación anunciada — incluida una que reportaba celdas de 700 mAh vendidas como 800 mAh.
+
+**El contraste entre las dos consultas es el hallazgo metodológico.** El índice funcionaba en ambos casos; la primera pregunta era simplemente demasiado genérica, y una consulta vaga recupera quejas prototípicas. Es además la forma de diagnosticar un problema de recuperación: comprobar si una reseña que sabes indexada y sobre el tema vuelve al consultar por ese tema. Si vuelve, el índice está bien y lo que hay que trabajar es la pregunta.
+
+### Qué puede y qué no puede responder
+
+| | |
+|---|---|
+| **Preguntas por categoría** | Funcionan bien. *¿De qué se quejan los clientes de productos wireless?* tiene 12.522 reseñas negativas detrás solo en esa categoría. |
+| **Preguntas por producto** | Imposibles, y se deriva directamente del análisis exploratorio: 156.458 productos para 208.899 reseñas, con mediana de una cada uno. La recuperación devuelve una sola reseña y no hay nada que sintetizar. |
+| **Preguntas cuantitativas** | Fuera de alcance. *¿Qué porcentaje de clientes se queja del precio?* no se responde recuperando quince reseñas. La recuperación encuentra ejemplos relevantes; no cuenta sobre el corpus — para eso está el análisis estadístico. |
+
+Dos limitaciones aparecieron en uso. Se recuperaron reseñas sobre baterías *como producto vendido* junto a reseñas sobre la batería *de un dispositivo*: la similitud empareja la palabra, no el papel que desempeña. Y una reseña recuperada elogiaba al vendedor pese a llevar una puntuación baja, recordatorio de que el filtro de sentimiento refleja la puntuación en estrellas, no el sentimiento de cada frase del texto.
 
 ## Limitaciones
 
@@ -308,6 +350,8 @@ Preguntar específicamente por la batería devolvió quince reseñas todas sobre
 **En lo que los modelos son buenos es en la distinción que importa comercialmente.** El signo prácticamente nunca se invierte, y cuando el modelo falla en una reseña polar se repliega al centro en lugar de afirmar lo contrario.
 
 **La comparación es una decisión, no un ranking.** BETO gana por cuatro puntos y el resultado es estadísticamente sólido. También cuesta 1.009 veces más por predicción. Lo que convierte la pregunta de *cuál es mejor* en *cuánto valen aquí cuatro puntos*, y la respuesta depende del volumen, del presupuesto de latencia y de si la decisión tiene que ser auditable. Para la mayoría de usos, el baseline.
+
+**La recuperación responde lo que la clasificación no puede.** Un modelo de sentimiento produce un número; no puede decir qué hay detrás. Restringir la recuperación por las etiquetas del propio clasificador y fundamentar la respuesta en las reseñas recuperadas convirtió *¿de qué se quejan los clientes en esta categoría?* en una consulta, y la respuesta — que las quejas son logísticas y no de producto — es el tipo de conclusión a la que una métrica agregada no puede llegar estructuralmente. Los dos sistemas son complementarios y no secuenciales: el clasificador dice cuántos y dónde, la recuperación dice por qué.
 
 **El método es la parte reutilizable.** Nada se limpió antes de medirlo, que es la razón por la que la fase de eliminación de HTML nunca se escribió. Ningún test se reportó sin tamaño del efecto, porque con este tamaño muestral el p-valor no lleva información. Y el rigor se escaló al coste: 144 configuraciones donde un ajuste cuesta 53 segundos, una receta estándar donde cuesta 23 minutos.
 

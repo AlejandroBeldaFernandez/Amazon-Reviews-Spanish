@@ -1,10 +1,10 @@
-# Amazon Reviews Spanish — Sentiment Classification and Retrieval
+# Amazon Reviews Spanish — Sentiment Classification and Retrieval-Augmented Question Answering
 
-NLP project classifying the sentiment of 208,899 Spanish Amazon reviews into negative, neutral and positive, comparing a bag-of-words baseline against a fine-tuned Spanish transformer, and building a retrieval system over the same corpus.
+Two systems built on 208,899 Spanish Amazon reviews. A **classifier** that labels sentiment as negative, neutral or positive, comparing a bag-of-words baseline against a fine-tuned Spanish transformer. And a **retrieval system** that answers questions about the corpus in natural language, grounded in real reviews and filtered by the classifier's own labels.
 
-- **Problem:** Recover customer sentiment from review text alone, and make the reasons behind it queryable in natural language
-- **Result:** Macro F1 of 0.765 with BETO against 0.725 for the TF-IDF baseline — and 0.85 to 0.88 F1 on the two poles, with the sign inverted in only 1 % of cases
-- **Value:** The transformer wins by four points and costs **1,009 times more per prediction**, which turns the comparison into a deployment decision rather than a ranking
+- **Problem:** Metrics say *how many* customers are unhappy. They never say *why*. The first system recovers sentiment from text alone; the second retrieves the reasons behind it and cites them.
+- **Result:** Macro F1 of 0.765 with BETO against 0.725 for the baseline, and 0.85 to 0.88 on the two poles with the sign inverted in only 1 % of cases. The retrieval system surfaced that **dissatisfaction in the `wireless` category is predominantly logistical, not about the product** — a finding no aggregate metric would have produced.
+- **Value:** The transformer wins by four points and costs **1,009 times more per prediction**, which turns the comparison into a deployment decision rather than a ranking. And that same cost analysis decides which model labels the corpus that feeds retrieval.
 
 > [Ver este proyecto en español](README_ES.md)
 
@@ -46,15 +46,24 @@ The first is a **three-class supervised classification** problem. The star ratin
 
 ## Business value
 
-**The model does one thing: it tells satisfaction from dissatisfaction, and it does it well.** Of genuinely negative reviews, 83 % are classified correctly and 1 % are called positive. For positive reviews, 85 % and 1 %.
+### The classifier: how many, and where
+
+**It tells satisfaction from dissatisfaction, and it does it well.** Of genuinely negative reviews, 83 % are classified correctly and 1 % are called positive. For positive reviews, 85 % and 1 %.
 
 The shape of that error profile is what makes it usable. **The model almost never inverts the sign.** When it fails on a polar review it does not claim the opposite; it retreats to the middle. For any process that routes reviews by sentiment, an unhappy customer is at worst left unrouted, never filed as satisfied.
 
-Three applications follow directly:
-
 - **Scoring text that carries no rating.** Support tickets, survey responses and social media mentions all contain customer opinion with no star attached. The same model applies without retraining.
 - **Detecting deterioration before the average moves.** A product's star average is computed over its entire history and reacts slowly. Classifying incoming reviews surfaces a change immediately.
-- **Making the reasons searchable.** The retrieval system turns *what are customers complaining about in this category?* into a query rather than a week of manual reading.
+
+### The retrieval system: why
+
+A sentiment score is a number. It cannot say what is behind it, and that is usually the part someone has to act on.
+
+Filtering retrieval by the classifier's own labels and grounding the answer in the retrieved reviews turns *what are customers complaining about in this category?* into a query rather than a week of manual reading. Asked exactly that about the `wireless` category, the system returned complaints about **sellers who do not reply, orders that never arrived and refunds that took weeks** — almost nothing about the product itself.
+
+That is an actionable conclusion with a clear owner: the lever is seller management and delivery, not manufacturing. And it is a conclusion no aggregate metric can produce. The classifier can say 46 % of `wireless` reviews are negative; only retrieval can say the complaints are about shipping.
+
+**The two systems are complementary rather than sequential.** The classifier says how many and where; retrieval says why, and cites the customers who said it.
 
 ---
 
@@ -270,22 +279,55 @@ Cohen's kappa between the two sets of predictions is 0.782 — high, but well sh
 
 ## Retrieval system (RAG)
 
-Reviews indexed in ChromaDB with sentence embeddings, retrieved by semantic similarity with metadata filtering, and summarised by a language model constrained to the retrieved text.
+The classifier answers *how many* customers are unhappy and *where*. This answers **why**, in their own words, and cites them.
 
-**Design decisions:**
+### Architecture
 
-- **One review is one chunk.** With a median of 22 words, a review is already the right unit. The corpus removes a whole tuning problem.
-- **Retrieval runs on cleaned text; the original is what gets returned.** Only possible because the original columns were preserved during cleaning.
-- **Sentiment is an indexed, filterable field**, which is what connects the two halves of the project. On unlabelled text the label would come from the classifier — and the cost analysis says which: 10 seconds with the baseline against 2.8 hours with BETO.
-- **Cosine distance, not Chroma's default**, so vector magnitude does not let review length interfere with the ranking.
-- **Deduplication is not optional.** *Buena relación calidad precio* appears 112 times verbatim; without a diversity filter a query returns fifteen passages that all say the same thing.
-- **Three rules in the prompt:** answer only from the supplied reviews, cite the number of each supporting review, and say explicitly when the answer is not there.
+```
+question
+   ↓
+metadata filter          category + sentiment, applied before any similarity is computed
+   ↓
+vector search            ChromaDB, cosine distance over sentence embeddings, k = 30
+   ↓
+deduplication            cosine threshold 0.9, reduces to 15 diverse passages
+   ↓
+grounded generation      LLM constrained to the retrieved text, with citations
+```
 
-**What the retrieval revealed.** Asking *what do customers complain about?* in the `wireless` category returned fifteen reviews of which almost none discussed the product: sellers who do not reply, orders that never arrived, refunds that took weeks, warranties nobody honoured. **In the negative reviews of that category, dissatisfaction is predominantly logistical rather than about the product itself** — which points the lever at seller management and delivery rather than manufacturing.
+### Design decisions
 
-Asking specifically about battery life returned fifteen reviews all on topic, clustering into short runtime, failure to charge, and mismatch with the advertised specification. **The index was working in both cases; the first question was simply too generic.**
+**One review is one chunk.** Retrieval systems normally have to split documents into passages, and the split is a tuning problem in itself. With a median of 22 words, a review is already the right unit. The corpus removes a whole design decision.
 
----
+**Retrieval runs on cleaned text; the original is what gets returned.** The two are stored separately in Chroma, which does not require them to match. Searching over normalised text while displaying what the customer actually wrote is only possible because the original columns were preserved during cleaning — a decision made five stages earlier that pays off here.
+
+**Sentiment is an indexed, filterable field, and this is what connects the two halves of the project.** Without it, the system could only match on textual similarity. With it, a question can be restricted to the negative reviews of a given category before any similarity is computed. Here the label comes from `stars`; on unlabelled text it would come from the classifier — and the cost analysis says which one: labelling 208,899 reviews takes **10 seconds with the baseline against 2.8 hours with BETO** on CPU. The A/B comparison is not an academic exercise, it decides an architectural choice.
+
+**Cosine distance, not Chroma's default.** Chroma indexes with squared Euclidean distance unless told otherwise, which lets vector magnitude interfere with the ranking. Reviews differ in length, so magnitude is exactly what should be ignored.
+
+**Deduplication is not optional here.** *Buena relación calidad precio* appears 112 times verbatim. Near-identical texts produce near-identical vectors, so without a diversity filter a query returns fifteen passages that all say the same thing. Candidates are retrieved at k = 30 and reduced to 15, since deduplication discards a variable number.
+
+**Generation is constrained by three rules:** answer only from the supplied reviews, cite the number of each review supporting a claim, and say so explicitly when the answer is not there. The third matters most. Without explicit permission to decline, a language model produces a plausible answer rather than admitting the context does not contain one — and a system that invents customer complaints is worse than no system.
+
+### What it found
+
+Asking *what do customers complain about?* in the `wireless` category returned fifteen reviews of which **almost none discussed the product**. They were about sellers who do not reply, orders that never arrived, refunds that took weeks of messages, warranties nobody honoured, and items that did not match their description.
+
+**In the negative reviews of that category, dissatisfaction is predominantly logistical rather than about the product itself.** For a retailer that is an actionable conclusion with a clear owner: the lever is seller management and delivery, not manufacturing or design. No aggregate sentiment metric would have produced it — the classifier can say 46 % of `wireless` reviews are negative, but not that the complaints are about shipping.
+
+Asking specifically about battery life returned fifteen reviews all on topic, clustering into short runtime, failure to charge, and mismatch with the advertised specification — including one reporting 700 mAh cells sold as 800 mAh.
+
+**The contrast between the two queries is the methodological finding.** The index was working in both cases; the first question was simply too generic, and a vague query retrieves prototypical complaints. This is also how to diagnose a retrieval problem: check whether a review known to be indexed and on topic comes back for a query about that topic. If it does, the index is fine and the question is what needs work.
+
+### What it can and cannot answer
+
+| | |
+|---|---|
+| **Category-level questions** | Work well. *What do customers complain about in wireless products?* has 12,522 negative reviews behind it in that category alone. |
+| **Product-level questions** | Impossible, and this follows directly from the exploratory analysis: 156,458 products for 208,899 reviews, a median of one each. Retrieval returns a single review and there is nothing to synthesise. |
+| **Quantitative questions** | Out of scope. *What percentage of customers complain about price?* cannot be answered by retrieving fifteen reviews. Retrieval finds relevant examples; it does not count over the corpus — that is what the statistical analysis is for. |
+
+Two limitations surfaced in use. Reviews about batteries *as the product being sold* were retrieved alongside reviews about the battery *of a device*: similarity matches the word, not the role it plays. And one retrieved review praised the seller while carrying a low rating, a reminder that the sentiment filter reflects the star rating, not the sentiment of every clause in the text.
 
 ## Limitations
 
@@ -308,6 +350,8 @@ Asking specifically about battery life returned fifteen reviews all on topic, cl
 **What the models are good at is the distinction that matters commercially.** The sign is almost never inverted, and when the model fails on a polar review it retreats to the middle rather than claiming the opposite.
 
 **The comparison is a decision, not a ranking.** BETO wins by four points and the result is statistically solid. It also costs 1,009 times more per prediction. Which turns the question from *which is better* into *what are four points worth here*, and the answer depends on volume, latency budget and whether the decision has to be auditable. For most uses, the baseline.
+
+**Retrieval answers what classification cannot.** A sentiment model produces a number; it cannot say what is behind it. Restricting retrieval by the classifier's own labels and grounding the answer in the retrieved reviews turned *what are customers complaining about in this category?* into a query, and the answer — that the complaints are logistical rather than about the product — is the kind of conclusion an aggregate metric structurally cannot reach. The two systems are complementary rather than sequential: the classifier says how many and where, retrieval says why.
 
 **The method is the part worth reusing.** Nothing was cleaned before it was measured, which is why the HTML-stripping stage was never written. No test was reported without an effect size, because at this sample size the p-value carries no information. And the rigour was scaled to the cost: 144 configurations where a fit takes 53 seconds, one standard recipe where it takes 23 minutes.
 
