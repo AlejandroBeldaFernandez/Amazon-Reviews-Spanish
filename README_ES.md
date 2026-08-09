@@ -3,10 +3,21 @@
 Dos sistemas construidos sobre 208.899 reseñas de Amazon en español. Un **clasificador** que etiqueta el sentimiento como negativo, neutro o positivo, comparando un baseline de bolsa de palabras contra un transformer español ajustado. Y un **sistema de recuperación** que responde preguntas sobre el corpus en lenguaje natural, fundamentadas en reseñas reales y filtradas por las etiquetas del propio clasificador.
 
 - **Problema:** Las métricas dicen *cuántos* clientes están descontentos. Nunca dicen *por qué*. El primer sistema recupera el sentimiento solo a partir del texto; el segundo recupera los motivos que hay detrás y los cita.
-- **Resultado:** F1 macro de 0,765 con BETO frente a 0,725 del baseline, y de 0,85 a 0,88 en los dos polos invirtiendo el signo en solo el 1 % de los casos. El sistema de recuperación destapó que **la insatisfacción en la categoría `wireless` es mayoritariamente logística y no de producto** — un hallazgo que ninguna métrica agregada habría producido.
+- **Resultado:** F1 macro de 0,765 con BETO frente a 0,725 del baseline, y de 0,85 a 0,88 en los dos polos invirtiendo el signo en solo el 1 % de los casos. La recuperación destapa los temas que hay detrás de esos números: preguntada de qué se quejan los clientes en `wireless`, devuelve fallos de conexión, vendedores que no contestan y pedidos que nunca llegaron — **concreciones que ninguna métrica agregada puede producir**.
 - **Valor:** El transformer gana por cuatro puntos y cuesta **1.009 veces más por predicción**, lo que convierte la comparación en una decisión de despliegue en lugar de un ranking. Y ese mismo análisis de coste decide qué modelo etiqueta el corpus que alimenta la recuperación.
 
+**[▶ Probar la demo interactiva](https://huggingface.co/spaces/Alessandrou24/Amazon-Reviews-Spanish)** — clasifica una reseña con los dos modelos a la vez y compara sus tiempos, pregunta al corpus en lenguaje natural y explora los hallazgos.
+
 > [View this project in English](README.md)
+
+> [!NOTE]
+> **Si la demo no carga, el Space está dormido.** Hugging Face pausa los Spaces gratuitos tras
+> un tiempo sin visitas. Entra en el [Space](https://huggingface.co/spaces/Alessandrou24/Amazon-Reviews-Spanish) y, si ves *Paused* o *Sleeping*, pulsa
+> **Restart this Space** — o *Settings → Factory rebuild* si se queda atascado. Tarda unos
+> minutos en construirse. La primera predicción de cada pestaña también va lenta porque
+> descarga los modelos; a partir de ahí es rápido.
+>
+> El modelo ajustado está en [`Alessandrou24/beto-sentiment-amazon-es`](https://huggingface.co/Alessandrou24/beto-sentiment-amazon-es).
 
 ---
 
@@ -59,9 +70,11 @@ La forma de ese perfil de error es lo que lo hace utilizable. **El modelo práct
 
 Una puntuación de sentimiento es un número. No puede decir qué hay detrás, y esa suele ser la parte sobre la que alguien tiene que actuar.
 
-Filtrar la recuperación por las etiquetas del propio clasificador y fundamentar la respuesta en las reseñas recuperadas convierte *¿de qué se quejan los clientes en esta categoría?* en una consulta en lugar de una semana de lectura manual. Preguntado exactamente eso sobre la categoría `wireless`, el sistema devolvió quejas sobre **vendedores que no contestan, pedidos que nunca llegaron y devoluciones que costaron semanas** — casi nada sobre el producto en sí.
+Filtrar la recuperación por las etiquetas del propio clasificador y fundamentar la respuesta en las reseñas recuperadas convierte *¿de qué se quejan los clientes en esta categoría?* en una consulta en lugar de una semana de lectura manual. Preguntado exactamente eso sobre `wireless`, devuelve temas concretos: conexiones WiFi que se caen, dispositivos que no emparejan, vendedores que no contestan, pedidos que nunca llegaron.
 
-Esa es una conclusión accionable y con un responsable claro: la palanca está en la gestión del vendedor y la entrega, no en la fabricación. Y es una conclusión que ninguna métrica agregada puede producir. El clasificador puede decir que el 46 % de las reseñas de `wireless` son negativas; solo la recuperación puede decir que las quejas van del envío.
+Ese es el tipo de resultado sobre el que alguien puede actuar, y lleva un responsable asociado: la conectividad apunta a ingeniería, los pedidos no entregados a logística. El clasificador puede decir que el 46 % de las reseñas de `wireless` son negativas; solo la recuperación puede decir de qué va ese 46 %.
+
+**Una advertencia sobre cómo leerlo.** La recuperación devuelve las quince reseñas más próximas a la pregunta, no un censo. Qué temas afloran depende de cómo se formule la pregunta, y los mismos filtros con otra redacción traen una mezcla distinta. Encuentra y resume evidencia; no mide cómo de frecuente es cada queja. Para eso está el análisis estadístico.
 
 **Los dos sistemas son complementarios y no secuenciales.** El clasificador dice cuántos y dónde; la recuperación dice por qué, y cita a los clientes que lo dijeron.
 

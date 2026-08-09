@@ -3,10 +3,21 @@
 Two systems built on 208,899 Spanish Amazon reviews. A **classifier** that labels sentiment as negative, neutral or positive, comparing a bag-of-words baseline against a fine-tuned Spanish transformer. And a **retrieval system** that answers questions about the corpus in natural language, grounded in real reviews and filtered by the classifier's own labels.
 
 - **Problem:** Metrics say *how many* customers are unhappy. They never say *why*. The first system recovers sentiment from text alone; the second retrieves the reasons behind it and cites them.
-- **Result:** Macro F1 of 0.765 with BETO against 0.725 for the baseline, and 0.85 to 0.88 on the two poles with the sign inverted in only 1 % of cases. The retrieval system surfaced that **dissatisfaction in the `wireless` category is predominantly logistical, not about the product** — a finding no aggregate metric would have produced.
+- **Result:** Macro F1 of 0.765 with BETO against 0.725 for the baseline, and 0.85 to 0.88 on the two poles with the sign inverted in only 1 % of cases. Retrieval surfaces the themes behind those numbers: asked what customers complain about in `wireless`, it returns connectivity failures, sellers who never reply and orders that never arrived — **specifics no aggregate metric can produce**.
 - **Value:** The transformer wins by four points and costs **1,009 times more per prediction**, which turns the comparison into a deployment decision rather than a ranking. And that same cost analysis decides which model labels the corpus that feeds retrieval.
 
+**[▶ Try the interactive demo](https://huggingface.co/spaces/Alessandrou24/Amazon-Reviews-Spanish)** — classify a review with both models side by side and see the latency gap, ask the corpus in natural language, and explore the findings.
+
 > [Ver este proyecto en español](README_ES.md)
+
+> [!NOTE]
+> **If the demo does not load, the Space is asleep.** Hugging Face pauses free Spaces after a
+> period without visits. Open the [Space](https://huggingface.co/spaces/Alessandrou24/Amazon-Reviews-Spanish), and if you see *Paused* or *Sleeping* click
+> **Restart this Space** — or *Settings → Factory rebuild* if it stays stuck. It takes a few
+> minutes to build. The first prediction in each tab is also slow, because it downloads the
+> models; everything after that is fast.
+>
+> The fine-tuned model lives at [`Alessandrou24/beto-sentiment-amazon-es`](https://huggingface.co/Alessandrou24/beto-sentiment-amazon-es).
 
 ---
 
@@ -59,9 +70,11 @@ The shape of that error profile is what makes it usable. **The model almost neve
 
 A sentiment score is a number. It cannot say what is behind it, and that is usually the part someone has to act on.
 
-Filtering retrieval by the classifier's own labels and grounding the answer in the retrieved reviews turns *what are customers complaining about in this category?* into a query rather than a week of manual reading. Asked exactly that about the `wireless` category, the system returned complaints about **sellers who do not reply, orders that never arrived and refunds that took weeks** — almost nothing about the product itself.
+Filtering retrieval by the classifier's own labels and grounding the answer in the retrieved reviews turns *what are customers complaining about in this category?* into a query rather than a week of manual reading. Asked exactly that about `wireless`, it returns concrete themes: WiFi connections that drop, devices that never pair, sellers who do not reply, orders that never arrived.
 
-That is an actionable conclusion with a clear owner: the lever is seller management and delivery, not manufacturing. And it is a conclusion no aggregate metric can produce. The classifier can say 46 % of `wireless` reviews are negative; only retrieval can say the complaints are about shipping.
+That is the kind of output someone can act on, and it has an owner attached: connectivity points at engineering, undelivered orders at logistics. The classifier can say 46 % of `wireless` reviews are negative; only retrieval can say what those 46 % are about.
+
+**One caveat on how to read it.** Retrieval returns the fifteen reviews closest to the question, not a census. Which themes surface depends on how the question is phrased, and the same filters with a different wording bring back a different mix. It finds and summarises evidence; it does not measure how common each complaint is. That is what the statistical analysis is for.
 
 **The two systems are complementary rather than sequential.** The classifier says how many and where; retrieval says why, and cites the customers who said it.
 
